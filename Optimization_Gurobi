@@ -1,0 +1,106 @@
+%pip install gurobipy
+import gurobipy as gp
+from gurobipy import GRB
+
+import pandas as pd
+import numpy as np
+
+supply = {
+    'South America': 1050,
+    'Southeast Asia': 30,
+    'Toronto': 100
+}
+
+demand = {
+    'Toronto': 381,
+    'Vancouver': 191,
+    'Calgary': 171,
+    'Winnipeg' : 64,
+    'Ottawa' : 127,
+    'Montreal': 184,
+    'Halifax': 64
+}
+
+arcs, costs = gp.multidict({
+    ('South America','Toronto'):14.0,
+    ('South America','Miami'): 9.0,
+    ('South America','Vancouver'): 20.0,
+    ('Southeast Asia','Toronto'): 35.0,
+    ('Southeast Asia','Miami'): 20.0,
+    ('Southeast Asia','Vancouver'): 35.0,
+    ('Europe','Toronto'): 30.0,
+    ('Europe','Miami'): 15.0,
+    ('Europe','Vancouver'): 35.0,
+    ('Toronto','Toronto'): 0.0,
+    ('Toronto','Vancouver'): 15.0,
+    ('Toronto','Calgary'): 14.0,
+    ('Toronto','Winnipeg'): 13.0,
+    ('Toronto','Ottawa'): 3.5,
+    ('Toronto','Montreal'): 3.5, 
+    ('Toronto','Halifax'): 4.0, 
+    ('Miami','Toronto'): 5.0,
+    ('Miami','Miami'): 0.0,
+    ('Miami','Vancouver'): 10.0,
+    ('Miami','Calgary'): 10.0,
+    ('Miami','Winnipeg'): 10.0,
+    ('Miami','Ottawa'): 7.5,
+    ('Miami','Montreal'): 7.5, 
+    ('Miami','Halifax'): 10.0,
+    ('Vancouver','Toronto'): 14.0,
+    ('Vancouver','Vancouver'): 5.0,
+    ('Vancouver','Calgary'): 7.0,
+    ('Vancouver','Winnipeg'): 8.0,
+    ('Vancouver','Ottawa'): 14.0,
+    ('Vancouver','Montreal'): 14.0, 
+    ('Vancouver','Halifax'): 22.0 
+})
+
+suppliers = ['South America','Southeast Asia','Europe']
+
+customers = ['Calgary','Winnipeg','Ottawa','Montreal','Halifax']
+
+m = gp.Model("Bloomex")
+
+Xvar = m.addVars(arcs, name="Boxes")
+
+Yvar = m.addVar(vtype=GRB.BINARY, name="y")
+
+m.setObjective(Xvar.prod(costs), GRB.MINIMIZE)
+
+supply_only = m.addConstrs((Xvar.sum(i,'*') <= supply[i] for i in suppliers[:2]), name='supply_cstr')
+
+demand_only = m.addConstrs((Xvar.sum('*',j) == demand[j] for j in customers), name='demand_cstr')
+
+transship_only = m.addConstr(Xvar.sum('*','Miami') == Xvar.sum('Miami','*'), name = 'Miami_cstr')
+
+transship_demand = m.addConstr(Xvar.sum('*','Vancouver') >= 
+                               Xvar.sum('Vancouver','*') + demand['Vancouver'], name = 'Vancouver_cstr')
+
+transship_demand_supply = m.addConstr(Xvar.sum('Toronto','*') + demand['Toronto'] <= 
+                                      Xvar.sum('*','Toronto') + supply['Toronto'], name = 'Toronto_cstr')
+
+Miami_receive = m.addConstr(Xvar.sum('*','Miami') <= 10000*Yvar, name = 'Miami_receive')
+
+Miami_ship = m.addConstr(Xvar.sum('Miami','*') <= 10000*Yvar, name = 'Miami_ship')
+
+m.write('bloomex_ip.lp')
+
+m.optimize()
+
+
+############################################################
+#display the solution
+
+rows = ['South America','Southeast Asia','Europe','Toronto','Miami','Vancouver']
+columns = ['Toronto','Miami','Vancouver','Calgary','Winnipeg','Ottawa','Montreal','Halifax']
+shipping_plan = pd.DataFrame(columns = columns, index = rows, data = 0.0)
+
+for i,j in arcs:
+  if(abs(Xvar[i,j].x) > 1e-6):
+    shipping_plan.loc[i, j] = np.round(Xvar[i,j].x,1)
+
+print('Total Cost = %g' %m.ObjVal)
+
+print('Miami Open = %g' %Yvar.x)
+
+shipping_plan
